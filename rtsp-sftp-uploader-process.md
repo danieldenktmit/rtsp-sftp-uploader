@@ -23,7 +23,7 @@ pipeline has been proven against a live RTSP source and a real SFTP server.
 | 9 | Docker image | ☑ DONE | 2026-09-27 | 127 MB, 3 architectures |
 | 10 | Helm chart | ☑ DONE | 2026-09-27 | 5 objects, 7 fail-fast validations |
 | 11 | Helm chart unit tests | ☑ DONE | 2026-09-27 | 63 assertions (plan asked for 46) |
-| 12 | CI workflow | ☑ DONE | 2026-09-27 | 6 jobs, actionlint clean |
+| 12 | CI workflow | ☑ DONE | 2026-09-27 | 6 jobs, actionlint clean; fixed after the first real run (see B-3) |
 | 13 | Release workflow (GHCR) | ☑ DONE | 2026-09-27 | Not yet exercised — needs a real tag push |
 | 14 | Documentation | ☑ DONE | 2026-09-27 | README, chart README, LICENSE |
 | 15 | Final verification and handover | ☑ DONE | 2026-09-27 | Gate passes |
@@ -49,10 +49,9 @@ Go test count: 9 packages, all passing under `-race`. Helm: 63 chart assertions.
 
 ---
 
-## Bugs the tests and the end-to-end run caught
+## Bugs the tests, the end-to-end run and CI caught
 
-These are the reason the work took the shape it did; all three are fixed and covered by
-regression tests.
+These are the reason the work took the shape it did; all four are fixed.
 
 ### B-1 — The SSH handshake could hang forever (found by a unit test)
 
@@ -82,7 +81,21 @@ modern servers negotiate.
 server now offers both RSA and ed25519, and three regression tests cover ed25519-only,
 RSA-only and both.
 
-### B-3 — Duplicate validation error
+### B-3 — CI validated manifests against a live cluster (found by the first CI run)
+
+The `helm` job used `kubectl apply --dry-run=client`, which despite the name contacts the
+API server to fetch the OpenAPI schema. It passed locally because a kind cluster was
+running on the dev machine, and failed on the runner:
+
+```
+error validating "rendered.yaml": failed to download openapi:
+Get "http://localhost:8080/openapi/v2?timeout=32s": dial tcp [::1]:8080: connect: connection refused
+```
+
+*Fix:* replaced with `kubeconform -strict`, which validates offline and additionally
+rejects unknown fields. See D-11.
+
+### B-4 — Duplicate validation error
 
 `Config.Validate` reported a missing RTSP source twice: once from the explicit check and
 once from `ResolvedURL`. *Fix:* the URL is only resolved once a source is present.
@@ -103,6 +116,7 @@ once from `ResolvedURL`. *Fix:* the URL is only resolved once a source is presen
 | D-8 | 11 | Whole-document secret assertions use `notMatchRegexRaw`, not `notMatchRegex`. | `notMatchRegex` requires a string path; `data` is a map. |
 | D-9 | 12 | CI pins Helm 3.19 for `helm-unittest`; the dev machine runs Helm 4.2.3. | helm-unittest 1.1.2 works on both, but Helm 4 needs `--verify=false` when installing the plugin, which Helm 3 does not accept. |
 | D-10 | — | `stretchr/testify` was dropped; tests use the standard library only. | Nothing needed it, and fewer dependencies is better. It remains an indirect dependency of `pkg/sftp`. |
+| D-11 | 12 | Manifest validation uses `kubeconform -strict`, not `kubectl apply --dry-run=client`. | **This was a defect in the first CI run.** `--dry-run=client` still downloads the OpenAPI schema from a live API server; it passed on the dev machine only because a kind cluster happened to be running, and failed in CI with `dial tcp [::1]:8080: connect: connection refused`. kubeconform validates offline against bundled schemas and is strictly better: `-strict` also rejects unknown fields, which `kubectl` does not. |
 
 ---
 
@@ -183,13 +197,13 @@ produced exit code 0.
 ### Chart
 
 ```
-$ helm template t charts/rtsp-sftp-uploader ... | kubectl apply --dry-run=client -f -
-serviceaccount/t-rtsp-sftp-uploader created (dry run)
-secret/t-rtsp-sftp-uploader created (dry run)
-configmap/t-rtsp-sftp-uploader created (dry run)
-service/t-rtsp-sftp-uploader created (dry run)
-deployment.apps/t-rtsp-sftp-uploader created (dry run)
+$ helm template t charts/rtsp-sftp-uploader ... > rendered.yaml
+$ kubeconform -strict -summary -kubernetes-version 1.29.0 rendered.yaml
+Summary: 5 resources found in 1 file - Valid: 5, Invalid: 0, Errors: 0, Skipped: 0
 ```
+
+The validator has been shown to have teeth: a misspelled field (`replicas` → `replica`)
+and a wrong type (`containerPort: "eighty-eighty"`) are both rejected with exit code 1.
 
 No secret value appears in the rendered ConfigMap; both appear in the Secret.
 All seven fail-fast validations produce their intended message:

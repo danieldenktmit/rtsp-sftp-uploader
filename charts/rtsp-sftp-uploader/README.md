@@ -178,5 +178,13 @@ The image is published for `linux/arm64` and `linux/arm/v7`.
 ```bash
 helm lint charts/rtsp-sftp-uploader --set rtsp.host=c --set sftp.host=s \
   --set sftp.username=u --set sftp.password=p --set sftp.insecureIgnoreHostKey=true
+
 helm unittest charts/rtsp-sftp-uploader
+
+# Validate the rendered manifests against the Kubernetes schema, offline.
+# Use kubeconform rather than `kubectl apply --dry-run=client`: the latter needs a
+# reachable API server to download the OpenAPI schema.
+helm template t charts/rtsp-sftp-uploader --set rtsp.host=c --set sftp.host=s \
+  --set sftp.username=u --set sftp.password=p --set sftp.insecureIgnoreHostKey=true \
+  | kubeconform -strict -summary -kubernetes-version 1.29.0 -
 ```

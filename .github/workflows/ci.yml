@@ -17,6 +17,10 @@ env:
   GO_VERSION: "1.27"
   HELM_VERSION: v3.19.0
   HELM_UNITTEST_VERSION: v1.1.2
+  KUBECONFORM_VERSION: v0.8.0
+  # Schema version the rendered manifests are validated against; keep it at or
+  # above the chart's kubeVersion floor.
+  KUBERNETES_VERSION: 1.29.0
   CHART: charts/rtsp-sftp-uploader
 
 jobs:
@@ -106,9 +110,15 @@ jobs:
             --set sftp.host=sftp.lan --set sftp.username=up --set sftp.password=zzSFTPSECRETzz \
             --set sftp.insecureIgnoreHostKey=true > rendered.yaml
           test -s rendered.yaml
-      - uses: azure/setup-kubectl@v5
+      - name: Install kubeconform
+        run: |
+          curl -sSfL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar -xz -C /usr/local/bin kubeconform
+          kubeconform -v
       - name: Validate the manifests against the Kubernetes schema
-        run: kubectl apply --dry-run=client -f rendered.yaml
+        # kubeconform rather than `kubectl apply --dry-run=client`: the latter
+        # downloads the OpenAPI schema from a live API server, which CI has none of.
+        run: kubeconform -strict -summary -kubernetes-version "$KUBERNETES_VERSION" rendered.yaml
       - name: No credential may appear in the ConfigMap
         run: |
           if awk '/^kind: ConfigMap/,/^---$/' rendered.yaml | grep -qE 'zzCAMSECRETzz|zzSFTPSECRETzz'; then
