@@ -10,7 +10,7 @@ HELM_MIN_SET := --set rtsp.host=cam.lan --set sftp.host=sftp.lan \
                 --set sftp.username=up --set sftp.password=zzSECRETzz \
                 --set sftp.insecureIgnoreHostKey=true
 
-.PHONY: all build test test-race cover lint fmt tidy docker docker-smoke docker-multiarch helm-lint helm-test verify clean
+.PHONY: all build test test-race cover lint fmt tidy docker docker-smoke docker-multiarch helm-lint helm-test check-actions verify clean
 
 all: verify build
 
@@ -52,7 +52,10 @@ helm-lint:
 helm-test:
 	helm unittest $(CHART)
 
-verify: lint test-race cover helm-lint helm-test
+check-actions:
+	./scripts/check-action-refs.sh
+
+verify: lint test-race cover helm-lint helm-test check-actions
 
 clean:
 	rm -rf bin dist coverage.out coverage.internal.out coverage.html

@@ -46,6 +46,12 @@ jobs:
         with:
           version: v2.14.0
           args: --timeout=5m
+      - name: Every referenced action tag exists
+        # GitHub only reports an unresolvable `uses:` ref when the workflow runs,
+        # so without this a bad pin surfaces as a failed release.
+        run: ./scripts/check-action-refs.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   test:
     runs-on: ubuntu-latest
