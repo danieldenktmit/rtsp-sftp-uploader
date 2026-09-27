@@ -1,0 +1,60 @@
+{{- include "rtsp-sftp-uploader.validate" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "rtsp-sftp-uploader.fullname" . }}
+  labels:
+    {{- include "rtsp-sftp-uploader.labels" . | nindent 4 }}
+data:
+  {{- /* Secrets (rtsp.url, rtsp.password, sftp.url, sftp.password) live in the Secret, never here. */}}
+  {{- with .Values.rtsp.host }}
+  RTSP_HOST: {{ . | quote }}
+  {{- end }}
+  RTSP_PORT: {{ .Values.rtsp.port | quote }}
+  RTSP_PATH: {{ .Values.rtsp.path | quote }}
+  {{- with .Values.rtsp.username }}
+  RTSP_USERNAME: {{ . | quote }}
+  {{- end }}
+  RTSP_TRANSPORT: {{ .Values.rtsp.transport | quote }}
+  RTSP_TIMEOUT: {{ .Values.rtsp.timeout | quote }}
+
+  CAPTURE_INTERVAL: {{ .Values.capture.interval | quote }}
+  CAPTURE_TIMEOUT: {{ .Values.capture.timeout | quote }}
+  CAPTURE_FILENAME: {{ .Values.capture.filename | quote }}
+  CAPTURE_JPEG_QUALITY: {{ .Values.capture.jpegQuality | quote }}
+  CAPTURE_OUTPUT_DIR: {{ .Values.capture.outputDir | quote }}
+
+  {{- with .Values.sftp.host }}
+  SFTP_HOST: {{ . | quote }}
+  {{- end }}
+  SFTP_PORT: {{ .Values.sftp.port | quote }}
+  {{- with .Values.sftp.username }}
+  SFTP_USERNAME: {{ . | quote }}
+  {{- end }}
+  SFTP_REMOTE_DIR: {{ .Values.sftp.remoteDir | quote }}
+  SFTP_REMOTE_FILENAME: {{ include "rtsp-sftp-uploader.remoteFilename" . | quote }}
+  SFTP_TIMEOUT: {{ .Values.sftp.timeout | quote }}
+  SFTP_MKDIR: {{ .Values.sftp.mkdir | quote }}
+  SFTP_ATOMIC: {{ .Values.sftp.atomic | quote }}
+  SFTP_FILE_MODE: {{ .Values.sftp.fileMode | quote }}
+  SFTP_RETRY_ATTEMPTS: {{ .Values.sftp.retryAttempts | quote }}
+  SFTP_RETRY_BACKOFF: {{ .Values.sftp.retryBackoff | quote }}
+  {{- with .Values.sftp.hostKeyFingerprint }}
+  SFTP_HOST_KEY_FINGERPRINT: {{ . | quote }}
+  {{- end }}
+  {{- if .Values.sftp.insecureIgnoreHostKey }}
+  SFTP_INSECURE_IGNORE_HOST_KEY: "true"
+  {{- end }}
+  {{- if .Values.sftp.privateKey }}
+  SFTP_PRIVATE_KEY_PATH: {{ printf "%s/id" (include "rtsp-sftp-uploader.secretMountPath" .) | quote }}
+  {{- end }}
+  {{- if .Values.sftp.knownHosts }}
+  SFTP_KNOWN_HOSTS_PATH: {{ printf "%s/known_hosts" (include "rtsp-sftp-uploader.secretMountPath" .) | quote }}
+  {{- end }}
+
+  HTTP_ADDR: {{ if .Values.http.enabled }}{{ printf ":%v" .Values.http.port | quote }}{{ else }}""{{ end }}
+  {{- with .Values.http.readyMaxStaleness }}
+  HTTP_READY_MAX_STALENESS: {{ . | quote }}
+  {{- end }}
+  LOG_LEVEL: {{ .Values.log.level | quote }}
+  LOG_FORMAT: {{ .Values.log.format | quote }}

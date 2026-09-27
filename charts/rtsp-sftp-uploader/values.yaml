@@ -1,0 +1,159 @@
+# -- Must stay 1: a second pod would overwrite the same remote file.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/danieldenktmit/rtsp-sftp-uploader
+  # Defaults to the chart's appVersion when empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+rtsp:
+  # Full rtsp:// URL. Takes precedence over host/port/path.
+  # Credentials here are stored in the Secret, not the ConfigMap.
+  url: ""
+  # Required unless url is set.
+  host: ""
+  port: 554
+  # Stream path, e.g. /Streaming/Channels/101 (Hikvision),
+  # /cam/realmonitor?channel=1&subtype=0 (Dahua), /h264Preview_01_main (Reolink).
+  path: "/"
+  username: ""
+  # Stored in the Secret.
+  password: ""
+  # tcp avoids the packet-loss artefacts udp produces on busy networks.
+  transport: tcp
+  timeout: 15s
+
+capture:
+  # How often a frame is captured and uploaded.
+  interval: 60s
+  # Hard time limit for one ffmpeg run; must exceed rtsp.timeout.
+  timeout: 30s
+  filename: image.jpg
+  # 2 (best) to 31 (worst).
+  jpegQuality: 2
+  # Must be writable; an emptyDir is mounted here so the root filesystem can stay read-only.
+  outputDir: /tmp
+
+sftp:
+  # sftp://user:pass@host:port/folder. Supplies defaults for the settings below.
+  # Stored in the Secret because it may contain a password.
+  url: ""
+  # Required unless url is set.
+  host: ""
+  port: 22
+  username: ""
+  # Stored in the Secret.
+  password: ""
+  # PEM contents of a private key, mounted at /etc/rtsp-sftp-uploader/id.
+  privateKey: ""
+  privateKeyPassphrase: ""
+  remoteDir: /upload
+  # Defaults to capture.filename.
+  remoteFilename: ""
+  timeout: 30s
+  mkdir: true
+  # Upload to a temporary name and rename into place, so consumers never read a
+  # half-written image.
+  atomic: true
+  fileMode: "0644"
+  retryAttempts: 3
+  retryBackoff: 2s
+
+  # --- Host key verification: configure exactly one of the three ---
+  # Contents of a known_hosts file, mounted at /etc/rtsp-sftp-uploader/known_hosts.
+  # Obtain with: ssh-keyscan -p 22 sftp.example.com
+  knownHosts: ""
+  # A pinned SHA256 fingerprint, e.g. "SHA256:abc...".
+  # Obtain with: ssh-keyscan -p 22 sftp.example.com | ssh-keygen -lf -
+  hostKeyFingerprint: ""
+  # Disables verification entirely. Only for trusted networks.
+  insecureIgnoreHostKey: false
+
+# Reuse an existing Secret instead of letting the chart create one.
+# Recognised keys: RTSP_URL, RTSP_PASSWORD, SFTP_URL, SFTP_PASSWORD,
+# SFTP_PRIVATE_KEY_PASSPHRASE, and the files id / known_hosts.
+existingSecret: ""
+
+log:
+  # debug | info | warn | error
+  level: info
+  # json | text
+  format: json
+
+http:
+  enabled: true
+  port: 8080
+  # Age of the last success before /readyz fails. Empty means 3 x capture.interval
+  # (at least 90s).
+  readyMaxStaleness: ""
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8080
+  annotations: {}
+
+probes:
+  liveness:
+    enabled: true
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    initialDelaySeconds: 15
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# The emptyDir mounted at capture.outputDir.
+tmpVolume:
+  sizeLimit: 64Mi
+  # Set to "Memory" for a tmpfs.
+  medium: ""
+
+extraEnv: []
+extraEnvFrom: []
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""
+terminationGracePeriodSeconds: 30

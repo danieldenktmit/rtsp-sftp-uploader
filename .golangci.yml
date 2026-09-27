@@ -1,0 +1,36 @@
+version: "2"
+run:
+  timeout: 5m
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - gocritic
+    - gosec
+    - misspell
+    - nilerr
+    - noctx
+    - revive
+    - unconvert
+    - unparam
+    - usetesting
+    - wastedassign
+  settings:
+    gosec:
+      excludes:
+        - G204 # we intentionally exec ffmpeg with a config-supplied path
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [gosec, unparam, errcheck, noctx, revive]
+formatters:
+  enable: [gofmt, goimports]
+  settings:
+    goimports:
+      local-prefixes: [github.com/danieldenktmit/rtsp-sftp-uploader]

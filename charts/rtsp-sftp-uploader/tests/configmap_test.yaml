@@ -1,0 +1,174 @@
+suite: configmap
+templates:
+  - configmap.yaml
+set:
+  rtsp.host: cam.lan
+  sftp.host: sftp.lan
+  sftp.username: uploader
+  sftp.password: zzSFTPSECRETzz
+  sftp.insecureIgnoreHostKey: true
+tests:
+  - it: carries the default capture interval
+    asserts:
+      - equal:
+          path: data.CAPTURE_INTERVAL
+          value: "60s"
+
+  - it: honours a custom capture interval
+    set:
+      capture.interval: 30s
+    asserts:
+      - equal:
+          path: data.CAPTURE_INTERVAL
+          value: "30s"
+
+  - it: quotes numeric values as strings
+    asserts:
+      - equal:
+          path: data.RTSP_PORT
+          value: "554"
+      - equal:
+          path: data.SFTP_PORT
+          value: "22"
+      - equal:
+          path: data.CAPTURE_JPEG_QUALITY
+          value: "2"
+      - equal:
+          path: data.SFTP_RETRY_ATTEMPTS
+          value: "3"
+
+  - it: quotes booleans as strings
+    asserts:
+      - equal:
+          path: data.SFTP_MKDIR
+          value: "true"
+      - equal:
+          path: data.SFTP_ATOMIC
+          value: "true"
+      - equal:
+          path: data.SFTP_INSECURE_IGNORE_HOST_KEY
+          value: "true"
+
+  - it: carries the remote directory and the derived remote filename
+    set:
+      sftp.remoteDir: /photos/cam1
+    asserts:
+      - equal:
+          path: data.SFTP_REMOTE_DIR
+          value: /photos/cam1
+      - equal:
+          path: data.SFTP_REMOTE_FILENAME
+          value: image.jpg
+
+  - it: derives the remote filename from the capture filename
+    set:
+      capture.filename: snapshot.jpg
+    asserts:
+      - equal:
+          path: data.SFTP_REMOTE_FILENAME
+          value: snapshot.jpg
+
+  - it: prefers an explicit remote filename
+    set:
+      capture.filename: snapshot.jpg
+      sftp.remoteFilename: latest.jpg
+    asserts:
+      - equal:
+          path: data.SFTP_REMOTE_FILENAME
+          value: latest.jpg
+
+  - it: omits optional keys that are unset, leaving the binary's defaults in charge
+    asserts:
+      - isNull:
+          path: data.RTSP_USERNAME
+      - isNull:
+          path: data.SFTP_HOST_KEY_FINGERPRINT
+      - isNull:
+          path: data.SFTP_PRIVATE_KEY_PATH
+      - isNull:
+          path: data.SFTP_KNOWN_HOSTS_PATH
+      - isNull:
+          path: data.HTTP_READY_MAX_STALENESS
+
+  - it: points at the mounted private key only when one is configured
+    set:
+      sftp.privateKey: "PEM"
+    asserts:
+      - equal:
+          path: data.SFTP_PRIVATE_KEY_PATH
+          value: /etc/rtsp-sftp-uploader/id
+
+  - it: points at the mounted known_hosts only when one is configured
+    set:
+      sftp.insecureIgnoreHostKey: false
+      sftp.knownHosts: "[sftp.lan]:22 ssh-ed25519 AAAA..."
+    asserts:
+      - equal:
+          path: data.SFTP_KNOWN_HOSTS_PATH
+          value: /etc/rtsp-sftp-uploader/known_hosts
+
+  - it: never exposes a credential
+    set:
+      rtsp.password: zzCAMSECRETzz
+      sftp.privateKeyPassphrase: zzPASSPHRASEzz
+    asserts:
+      - notMatchRegexRaw:
+          pattern: zzSFTPSECRETzz
+      - notMatchRegexRaw:
+          pattern: zzCAMSECRETzz
+      - notMatchRegexRaw:
+          pattern: zzPASSPHRASEzz
+      - isNull:
+          path: data.RTSP_PASSWORD
+      - isNull:
+          path: data.SFTP_PASSWORD
+      - isNull:
+          path: data.RTSP_URL
+      - isNull:
+          path: data.SFTP_URL
+
+  - it: builds the listen address from the configured port
+    asserts:
+      - equal:
+          path: data.HTTP_ADDR
+          value: ":8080"
+
+  - it: follows a custom health port
+    set:
+      http.port: 9090
+    asserts:
+      - equal:
+          path: data.HTTP_ADDR
+          value: ":9090"
+
+  - it: carries an explicit readiness staleness window
+    set:
+      http.readyMaxStaleness: 10m
+    asserts:
+      - equal:
+          path: data.HTTP_READY_MAX_STALENESS
+          value: "10m"
+
+  - it: carries the log and transport settings
+    set:
+      log.level: debug
+      log.format: text
+      rtsp.transport: udp
+    asserts:
+      - equal:
+          path: data.LOG_LEVEL
+          value: debug
+      - equal:
+          path: data.LOG_FORMAT
+          value: text
+      - equal:
+          path: data.RTSP_TRANSPORT
+          value: udp
+
+  - it: preserves a stream path containing a query string
+    set:
+      rtsp.path: "/cam/realmonitor?channel=1&subtype=0"
+    asserts:
+      - equal:
+          path: data.RTSP_PATH
+          value: "/cam/realmonitor?channel=1&subtype=0"

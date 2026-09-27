@@ -1,0 +1,406 @@
+suite: deployment
+templates:
+  - deployment.yaml
+  - configmap.yaml
+  - secret.yaml
+set:
+  rtsp.host: cam.lan
+  sftp.host: sftp.lan
+  sftp.username: uploader
+  sftp.password: zzSFTPSECRETzz
+  sftp.insecureIgnoreHostKey: true
+tests:
+  - it: renders a single Deployment with the expected name and labels
+    template: deployment.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Deployment
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-rtsp-sftp-uploader
+      - equal:
+          path: metadata.labels["app.kubernetes.io/name"]
+          value: rtsp-sftp-uploader
+      - equal:
+          path: metadata.labels["app.kubernetes.io/managed-by"]
+          value: Helm
+      - isNotEmpty:
+          path: metadata.labels["helm.sh/chart"]
+
+  - it: runs exactly one replica with the Recreate strategy
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+      - equal:
+          path: spec.strategy.type
+          value: Recreate
+
+  - it: defaults the image tag to the chart appVersion
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/danieldenktmit/rtsp-sftp-uploader:0.1.0
+      - equal:
+          path: spec.template.spec.containers[0].imagePullPolicy
+          value: IfNotPresent
+
+  - it: honours an explicit image tag, repository and pull policy
+    template: deployment.yaml
+    set:
+      image.repository: example.com/mirror/rsu
+      image.tag: v9.9.9
+      image.pullPolicy: Always
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: example.com/mirror/rsu:v9.9.9
+      - equal:
+          path: spec.template.spec.containers[0].imagePullPolicy
+          value: Always
+
+  - it: reads configuration from the ConfigMap and the Secret
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].envFrom[0].configMapRef.name
+          value: RELEASE-NAME-rtsp-sftp-uploader
+      - equal:
+          path: spec.template.spec.containers[0].envFrom[1].secretRef.name
+          value: RELEASE-NAME-rtsp-sftp-uploader
+      - equal:
+          path: spec.template.spec.containers[0].envFrom[1].secretRef.optional
+          value: true
+
+  - it: references an existing Secret when one is given
+    template: deployment.yaml
+    set:
+      existingSecret: my-camera-credentials
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].envFrom[1].secretRef.name
+          value: my-camera-credentials
+
+  - it: passes extraEnv and extraEnvFrom through
+    template: deployment.yaml
+    set:
+      extraEnv:
+        - name: TZ
+          value: Europe/Berlin
+      extraEnvFrom:
+        - secretRef:
+            name: other-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TZ
+            value: Europe/Berlin
+      - contains:
+          path: spec.template.spec.containers[0].envFrom
+          content:
+            secretRef:
+              name: other-secret
+
+  - it: probes the health endpoints
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
+          value: http
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /readyz
+      - equal:
+          path: spec.template.spec.containers[0].ports[0].containerPort
+          value: 8080
+
+  - it: omits the liveness probe when disabled
+    template: deployment.yaml
+    set:
+      probes.liveness.enabled: false
+    asserts:
+      - isNull:
+          path: spec.template.spec.containers[0].livenessProbe
+      - isNotNull:
+          path: spec.template.spec.containers[0].readinessProbe
+
+  - it: omits ports and probes entirely when http is disabled
+    template: deployment.yaml
+    set:
+      http.enabled: false
+    asserts:
+      - isNull:
+          path: spec.template.spec.containers[0].ports
+      - isNull:
+          path: spec.template.spec.containers[0].livenessProbe
+      - isNull:
+          path: spec.template.spec.containers[0].readinessProbe
+
+  - it: disables the HTTP listener in the ConfigMap when http is disabled
+    template: configmap.yaml
+    set:
+      http.enabled: false
+    asserts:
+      - equal:
+          path: data.HTTP_ADDR
+          value: ""
+
+  - it: hardens the container
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          content: ALL
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.securityContext.runAsUser
+          value: 65532
+      - equal:
+          path: spec.template.spec.securityContext.seccompProfile.type
+          value: RuntimeDefault
+
+  - it: mounts a writable volume at the capture output directory
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[0].mountPath
+          value: /tmp
+      - equal:
+          path: spec.template.spec.volumes[0].name
+          value: tmp
+      - equal:
+          path: spec.template.spec.volumes[0].emptyDir.sizeLimit
+          value: 64Mi
+
+  - it: follows a changed capture output directory
+    template: deployment.yaml
+    set:
+      capture.outputDir: /var/cache/snapshots
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[0].mountPath
+          value: /var/cache/snapshots
+
+  - it: supports a tmpfs-backed scratch volume
+    template: deployment.yaml
+    set:
+      tmpVolume.medium: Memory
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0].emptyDir.medium
+          value: Memory
+
+  - it: mounts no secret files when no key or known_hosts is configured
+    template: deployment.yaml
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.volumes
+          count: 1
+      - lengthEqual:
+          path: spec.template.spec.containers[0].volumeMounts
+          count: 1
+
+  - it: mounts the private key read-only when one is configured
+    template: deployment.yaml
+    set:
+      sftp.privateKey: |
+        -----BEGIN OPENSSH PRIVATE KEY-----
+        fake
+        -----END OPENSSH PRIVATE KEY-----
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[1].mountPath
+          value: /etc/rtsp-sftp-uploader
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[1].readOnly
+          value: true
+      - equal:
+          path: spec.template.spec.volumes[1].secret.defaultMode
+          value: 256
+      - contains:
+          path: spec.template.spec.volumes[1].secret.items
+          content:
+            key: id
+            path: id
+
+  - it: mounts known_hosts when configured
+    template: deployment.yaml
+    set:
+      sftp.insecureIgnoreHostKey: false
+      sftp.knownHosts: "[sftp.lan]:22 ssh-ed25519 AAAA..."
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes[1].secret.items
+          content:
+            key: known_hosts
+            path: known_hosts
+
+  - it: restarts the pod when configuration changes
+    template: deployment.yaml
+    asserts:
+      - isNotEmpty:
+          path: spec.template.metadata.annotations["checksum/config"]
+      - isNotEmpty:
+          path: spec.template.metadata.annotations["checksum/secret"]
+
+  - it: passes scheduling settings through
+    template: deployment.yaml
+    set:
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      tolerations:
+        - key: camera
+          operator: Exists
+      priorityClassName: high
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: zone
+          whenUnsatisfiable: DoNotSchedule
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: role
+                    operator: In
+                    values: [edge]
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector["kubernetes.io/arch"]
+          value: arm64
+      - equal:
+          path: spec.template.spec.tolerations[0].key
+          value: camera
+      - equal:
+          path: spec.template.spec.priorityClassName
+          value: high
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints[0].topologyKey
+          value: zone
+      - isNotNull:
+          path: spec.template.spec.affinity.nodeAffinity
+
+  - it: passes resources through
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests.cpu
+          value: 25m
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.memory
+          value: 256Mi
+
+  - it: uses the created ServiceAccount and does not mount its token
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: RELEASE-NAME-rtsp-sftp-uploader
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false
+
+  - it: honours a ServiceAccount name override
+    template: deployment.yaml
+    set:
+      serviceAccount.create: false
+      serviceAccount.name: existing-sa
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: existing-sa
+
+  - it: passes imagePullSecrets and the grace period through
+    template: deployment.yaml
+    set:
+      imagePullSecrets:
+        - name: ghcr-creds
+      terminationGracePeriodSeconds: 45
+    asserts:
+      - equal:
+          path: spec.template.spec.imagePullSecrets[0].name
+          value: ghcr-creds
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 45
+
+  - it: honours fullnameOverride
+    template: deployment.yaml
+    set:
+      fullnameOverride: cam1
+    asserts:
+      - equal:
+          path: metadata.name
+          value: cam1
+
+  - it: refuses to install without an RTSP source
+    template: deployment.yaml
+    set:
+      rtsp.host: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: "rtsp-sftp-uploader: set either rtsp.url or rtsp.host"
+
+  - it: refuses to install without an SFTP host
+    template: deployment.yaml
+    set:
+      sftp.host: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: "rtsp-sftp-uploader: set either sftp.url or sftp.host"
+
+  - it: refuses to install without an SFTP username
+    template: deployment.yaml
+    set:
+      sftp.username: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: "rtsp-sftp-uploader: set sftp.username"
+
+  - it: refuses to install without an SFTP credential
+    template: deployment.yaml
+    set:
+      sftp.password: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: "rtsp-sftp-uploader: provide a credential: set sftp.password, sftp.privateKey, or existingSecret"
+
+  - it: refuses to install without a host key strategy
+    template: deployment.yaml
+    set:
+      sftp.insecureIgnoreHostKey: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "rtsp-sftp-uploader: configure host key verification: set sftp.knownHosts or sftp.hostKeyFingerprint, or explicitly set sftp.insecureIgnoreHostKey=true"
+
+  - it: refuses two host key strategies at once
+    template: deployment.yaml
+    set:
+      sftp.hostKeyFingerprint: "SHA256:abc"
+    asserts:
+      - failedTemplate:
+          errorMessage: "rtsp-sftp-uploader: sftp.knownHosts, sftp.hostKeyFingerprint and sftp.insecureIgnoreHostKey are mutually exclusive; choose one"
+
+  - it: refuses more than one replica
+    template: deployment.yaml
+    set:
+      replicaCount: 2
+    asserts:
+      - failedTemplate:
+          errorMessage: "rtsp-sftp-uploader: replicaCount must be 1; multiple replicas would overwrite the same remote file"

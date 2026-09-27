@@ -1,0 +1,12 @@
+.git
+.github
+.idea
+bin
+dist
+charts
+scripts
+Makefile
+.golangci.yml
+coverage.*
+*.md
+!README.md

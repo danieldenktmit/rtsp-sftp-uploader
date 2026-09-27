@@ -1,0 +1,24 @@
+# Build output
+/bin/
+/dist/
+*.test
+*.tgz
+
+# Coverage
+coverage.out
+coverage.internal.out
+coverage.html
+
+# Local secrets / runtime artifacts
+.env
+.env.local
+image.jpg
+*.pem
+
+# Helm
+/charts/**/charts/
+
+# IDE
+.idea/workspace.xml
+.idea/shelf/
+.DS_Store

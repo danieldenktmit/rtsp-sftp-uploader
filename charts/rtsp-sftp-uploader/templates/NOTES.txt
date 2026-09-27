@@ -1,0 +1,26 @@
+{{ include "rtsp-sftp-uploader.fullname" . }} is installed.
+
+It captures a frame from {{ if .Values.rtsp.url }}the configured RTSP URL{{ else }}rtsp://{{ .Values.rtsp.host }}:{{ .Values.rtsp.port }}{{ .Values.rtsp.path }}{{ end }}
+every {{ .Values.capture.interval }} and uploads it to {{ .Values.sftp.remoteDir }}/{{ include "rtsp-sftp-uploader.remoteFilename" . }}.
+
+Watch it work:
+
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }} -f
+
+{{- if .Values.http.enabled }}
+
+Check its status:
+
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "rtsp-sftp-uploader.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+  curl localhost:{{ .Values.service.port }}/status
+{{- end }}
+{{- if .Values.sftp.insecureIgnoreHostKey }}
+
+WARNING
+  sftp.insecureIgnoreHostKey is enabled, so the SFTP server's identity is not
+  verified and the connection can be intercepted. Pin the host key instead:
+
+    ssh-keyscan -p {{ .Values.sftp.port }} {{ .Values.sftp.host | default "your-sftp-host" }} | ssh-keygen -lf -
+
+  then set sftp.hostKeyFingerprint, or put the ssh-keyscan output in sftp.knownHosts.
+{{- end }}

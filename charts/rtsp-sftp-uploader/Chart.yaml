@@ -1,0 +1,18 @@
+apiVersion: v2
+name: rtsp-sftp-uploader
+description: Captures a frame from an RTSP camera and uploads it to an SFTP server on an interval
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.25.0-0"
+home: https://github.com/danieldenktmit/rtsp-sftp-uploader
+sources:
+  - https://github.com/danieldenktmit/rtsp-sftp-uploader
+keywords:
+  - rtsp
+  - sftp
+  - camera
+  - snapshot
+  - ffmpeg
+maintainers:
+  - name: danieldenktmit
