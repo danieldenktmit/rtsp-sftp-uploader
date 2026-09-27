@@ -18,7 +18,7 @@ pipeline has been proven against a live RTSP source and a real SFTP server.
 | 4 | `internal/capture` (ffmpeg) | ☑ DONE | 2026-09-27 | 98.9% coverage |
 | 5 | `internal/uploader` (SFTP) | ☑ DONE | 2026-09-27 | 91.3%; **found 2 real bugs** |
 | 6 | `internal/health` | ☑ DONE | 2026-09-27 | 98.8% coverage |
-| 7 | `internal/app` (loop) | ☑ DONE | 2026-09-27 | 100% coverage |
+| 7 | `internal/app` (loop) | ☑ DONE | 2026-09-27 | 100% coverage; shutdown handling corrected after a CI flake (B-5) |
 | 8 | `cmd/rtsp-sftp-uploader` | ☑ DONE | 2026-09-27 | E2E verified against live services |
 | 9 | Docker image | ☑ DONE | 2026-09-27 | 127 MB, 3 architectures |
 | 10 | Helm chart | ☑ DONE | 2026-09-27 | 5 objects, 7 fail-fast validations |
@@ -51,7 +51,7 @@ Go test count: 9 packages, all passing under `-race`. Helm: 63 chart assertions.
 
 ## Bugs the tests, the end-to-end run, CI and the release run caught
 
-These are the reason the work took the shape it did; all five are fixed.
+These are the reason the work took the shape it did; all six are fixed.
 
 ### B-1 — The SSH handshake could hang forever (found by a unit test)
 
@@ -113,7 +113,36 @@ neither actionlint nor any local check caught it.
 GitHub tags API. It runs in the CI lint job and in `make verify`. All 14 referenced actions
 now verify; the script was confirmed to reject the original bad ref with exit code 1.
 
-### B-5 — Duplicate validation error
+### B-5 — A cycle interrupted by shutdown was reported as a failure (found by a flaky CI test)
+
+`TestRunLoop/one_cycle_per_tick` failed intermittently in CI:
+
+```
+health = {Successes:3 Failures:1 ... LastError:upload: context canceled}
+```
+
+Two distinct defects, one in the test and one in the product.
+
+**Test:** the helper polled the *grabber* call count as a proxy for "cycle complete". A cycle
+is a capture followed by an upload, so the fourth capture could land while the fourth upload
+was still in flight; cancelling at that instant aborted it. Replaced with `waitForCycles`,
+which polls completed outcomes (`Successes + Failures`) — the actual completion signal.
+
+**Product:** `Runner.fail` recorded every error, including one caused purely by shutdown. A
+graceful termination landing mid-cycle therefore logged `ERROR cycle failed` and left a
+phantom failure with `last_error: context canceled` in `/status` — sending an operator after
+a problem that never existed. `fail` now checks `ctx.Err()` first and logs
+`cycle interrupted by shutdown` at INFO without recording a failure. Two tests cover it:
+one asserting a shutdown records nothing, one asserting a genuine failure is still recorded
+(so the suppression cannot swallow real errors).
+
+While fixing this, `default_ticker_is_installed` was also reworked: it relied on a 120 ms
+wall-clock window, and now stops deterministically on the third cycle.
+
+Stress-verified afterwards: 150 runs of the app suite across `GOMAXPROCS` 1/2/4, plus the
+whole suite 5x under eight-way CPU contention — all clean.
+
+### B-6 — Duplicate validation error
 
 `Config.Validate` reported a missing RTSP source twice: once from the explicit check and
 once from `ResolvedURL`. *Fix:* the URL is only resolved once a source is present.
@@ -134,6 +163,7 @@ once from `ResolvedURL`. *Fix:* the URL is only resolved once a source is presen
 | D-8 | 11 | Whole-document secret assertions use `notMatchRegexRaw`, not `notMatchRegex`. | `notMatchRegex` requires a string path; `data` is a map. |
 | D-9 | 12 | CI pins Helm 3.19 for `helm-unittest`; the dev machine runs Helm 4.2.3. | helm-unittest 1.1.2 works on both, but Helm 4 needs `--verify=false` when installing the plugin, which Helm 3 does not accept. |
 | D-10 | — | `stretchr/testify` was dropped; tests use the standard library only. | Nothing needed it, and fewer dependencies is better. It remains an indirect dependency of `pkg/sftp`. |
+| D-13 | 7 | A cycle aborted by context cancellation is logged at INFO and not counted as a failure. | Shutdown is not an error; counting it produced phantom ERRORs and a misleading `/status`. See B-5. |
 | D-12 | 13 | `sigstore/cosign-installer` is pinned to the full `v4.1.2`, unlike the other actions which use floating major tags. | That repository publishes no `v4` tag. See B-4. |
 | D-11 | 12 | Manifest validation uses `kubeconform -strict`, not `kubectl apply --dry-run=client`. | **This was a defect in the first CI run.** `--dry-run=client` still downloads the OpenAPI schema from a live API server; it passed on the dev machine only because a kind cluster happened to be running, and failed in CI with `dial tcp [::1]:8080: connect: connection refused`. kubeconform validates offline against bundled schemas and is strictly better: `-strict` also rejects unknown fields, which `kubectl` does not. |
 
