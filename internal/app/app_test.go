@@ -347,17 +347,24 @@ func TestRunLoop(t *testing.T) {
 		}
 	}
 
-	// waitForCalls polls until the grabber has been called n times.
-	waitForCalls := func(t *testing.T, h *harness, n int) {
+	// waitForCycles polls until n cycles have *finished*.
+	//
+	// Waiting on the grabber call count instead would be a race: a cycle is a
+	// capture followed by an upload, so the nth capture can land while the nth
+	// upload is still in flight, and a cancel at that moment aborts it.
+	waitForCycles := func(t *testing.T, h *harness, n int) {
 		t.Helper()
 		deadline := time.Now().Add(5 * time.Second)
 		for time.Now().Before(deadline) {
-			if h.grabber.CallCount() >= n {
+			snap := h.state.Snapshot()
+			if snap.Successes+snap.Failures >= uint64(n) {
 				return
 			}
 			time.Sleep(time.Millisecond)
 		}
-		t.Fatalf("grabber was called %d times, want %d", h.grabber.CallCount(), n)
+		snap := h.state.Snapshot()
+		t.Fatalf("%d cycles completed (%d ok, %d failed), want %d",
+			snap.Successes+snap.Failures, snap.Successes, snap.Failures, n)
 	}
 
 	t.Run("first_cycle_runs_immediately", func(t *testing.T) {
@@ -366,7 +373,7 @@ func TestRunLoop(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		wait := runLoop(t, h, ctx)
 
-		waitForCalls(t, h, 1) // no tick was sent, so this can only be the eager cycle
+		waitForCycles(t, h, 1) // no tick was sent, so this can only be the eager cycle
 		cancel()
 		if err := wait(); err != nil {
 			t.Errorf("Run = %v, want nil on graceful shutdown", err)
@@ -379,11 +386,11 @@ func TestRunLoop(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		wait := runLoop(t, h, ctx)
 
-		waitForCalls(t, h, 1)
+		waitForCycles(t, h, 1)
 		for range 3 {
 			h.ticker.tick()
 		}
-		waitForCalls(t, h, 4) // 1 eager + 3 ticks
+		waitForCycles(t, h, 4) // 1 eager + 3 ticks
 
 		cancel()
 		if err := wait(); err != nil {
@@ -404,10 +411,10 @@ func TestRunLoop(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		wait := runLoop(t, h, ctx)
 
-		waitForCalls(t, h, 1)
+		waitForCycles(t, h, 1)
 		h.ticker.tick()
 		h.ticker.tick()
-		waitForCalls(t, h, 3)
+		waitForCycles(t, h, 3)
 
 		cancel()
 		if err := wait(); err != nil {
@@ -425,7 +432,7 @@ func TestRunLoop(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		wait := runLoop(t, h, ctx)
 
-		waitForCalls(t, h, 1)
+		waitForCycles(t, h, 1)
 		cancel()
 		if err := wait(); err != nil {
 			t.Fatalf("Run: %v", err)
@@ -460,7 +467,7 @@ func TestRunLoop(t *testing.T) {
 		}
 		wait := runLoop(t, h, ctx)
 
-		waitForCalls(t, h, 1)
+		waitForCycles(t, h, 1)
 		h.ticker.tick()
 		if err := wait(); err != nil {
 			t.Errorf("Run = %v, want nil", err)
@@ -486,7 +493,7 @@ func TestRunLoop(t *testing.T) {
 		h.runner.Interval = time.Hour
 		ctx, cancel := context.WithCancel(t.Context())
 		wait := runLoop(t, h, ctx)
-		waitForCalls(t, h, 1)
+		waitForCycles(t, h, 1)
 		cancel()
 		_ = wait()
 
@@ -498,24 +505,81 @@ func TestRunLoop(t *testing.T) {
 		}
 	})
 
+	t.Run("a_cycle_cut_short_by_shutdown_is_not_recorded_as_a_failure", func(t *testing.T) {
+		// A graceful termination that lands mid-cycle must not leave an ERROR in
+		// the logs or a phantom failure in /status.
+		h := newHarness(t)
+		h.runner.Interval = time.Hour
+		ctx, cancel := context.WithCancel(t.Context())
+		h.upload.OnCall = func(int) { cancel() } // cancel between capture and upload
+
+		if err := h.runner.Run(ctx); err != nil {
+			t.Fatalf("Run = %v, want nil", err)
+		}
+
+		snap := h.state.Snapshot()
+		if snap.Failures != 0 {
+			t.Errorf("Failures = %d, want 0: shutdown is not a failure (%+v)", snap.Failures, snap)
+		}
+		if snap.LastError != "" {
+			t.Errorf("LastError = %q, want empty", snap.LastError)
+		}
+		if h.findLog(t, "cycle failed") != nil {
+			t.Errorf("a shutdown must not log an error:\n%s", h.logs.String())
+		}
+		if h.findLog(t, "cycle interrupted by shutdown") == nil {
+			t.Errorf("expected an informational interruption log:\n%s", h.logs.String())
+		}
+	})
+
+	t.Run("a_genuine_failure_is_still_recorded", func(t *testing.T) {
+		// Guard against the shutdown suppression swallowing real failures.
+		h := newHarness(t)
+		h.runner.Interval = time.Hour
+		h.grabber.Err = errors.New("camera unreachable")
+		ctx, cancel := context.WithCancel(t.Context())
+		wait := runLoop(t, h, ctx)
+
+		waitForCycles(t, h, 1)
+		cancel()
+		if err := wait(); err != nil {
+			t.Fatalf("Run = %v, want nil", err)
+		}
+		snap := h.state.Snapshot()
+		if snap.Failures != 1 {
+			t.Errorf("Failures = %d, want 1 (%+v)", snap.Failures, snap)
+		}
+		if !strings.Contains(snap.LastError, "camera unreachable") {
+			t.Errorf("LastError = %q", snap.LastError)
+		}
+	})
+
 	t.Run("default_ticker_is_installed", func(t *testing.T) {
-		// A Runner built without seams must loop on a real ticker.
+		// A Runner built without seams must loop on a real ticker. The loop is
+		// stopped by the third cycle rather than by a wall-clock window, so a
+		// loaded machine cannot turn this into a flake; the surrounding timeout is
+		// only a backstop for the case the ticker never fires at all.
 		local := filepath.Join(t.TempDir(), "image.jpg")
-		grabber := &capturetest.Fake{}
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer cancel()
+
+		grabber := &capturetest.Fake{OnCall: func(n int) {
+			if n >= 3 {
+				cancel()
+			}
+		}}
 		r := &Runner{
 			Grabber:   grabber,
 			Uploader:  &uploadertest.Fake{},
 			LocalPath: local,
 			Interval:  5 * time.Millisecond,
 		}
-		ctx, cancel := context.WithTimeout(t.Context(), 120*time.Millisecond)
-		defer cancel()
 
 		if err := r.Run(ctx); err != nil {
 			t.Errorf("Run = %v, want nil", err)
 		}
-		if grabber.CallCount() < 2 {
-			t.Errorf("grabber called %d times; the real ticker did not fire", grabber.CallCount())
+		if got := grabber.CallCount(); got < 3 {
+			t.Errorf("grabber called %d times, want 3; the real ticker did not fire", got)
 		}
 	})
 }

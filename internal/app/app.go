@@ -57,11 +57,11 @@ func (r *Runner) RunOnce(ctx context.Context) error {
 
 	frame, err := r.Grabber.Grab(ctx, r.LocalPath)
 	if err != nil {
-		return r.fail(start, "capture", err)
+		return r.fail(ctx, start, "capture", err)
 	}
 
 	if err := r.Uploader.Upload(ctx, frame.Path); err != nil {
-		return r.fail(start, "upload", err)
+		return r.fail(ctx, start, "upload", err)
 	}
 
 	finished := r.Clock()
@@ -77,8 +77,16 @@ func (r *Runner) RunOnce(ctx context.Context) error {
 }
 
 // fail records a failed cycle and returns the redacted error.
-func (r *Runner) fail(start time.Time, stage string, err error) error {
+//
+// A cycle cut short by shutdown is not a failure: counting it would leave a
+// phantom entry in /status and log an ERROR on every graceful termination that
+// happens to land mid-cycle, sending operators after a problem that never existed.
+func (r *Runner) fail(ctx context.Context, start time.Time, stage string, err error) error {
 	wrapped := r.Redactor.Error(fmt.Errorf("%s: %w", stage, err))
+	if ctx.Err() != nil {
+		r.Logger.Info("cycle interrupted by shutdown", "stage", stage)
+		return wrapped
+	}
 	at := r.Clock()
 	r.Health.RecordFailure(at, wrapped)
 	r.Logger.Error("cycle failed", "stage", stage, "duration", at.Sub(start), "err", wrapped)
