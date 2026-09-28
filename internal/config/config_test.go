@@ -909,6 +909,91 @@ func TestHostKeyFingerprints(t *testing.T) {
 	})
 }
 
+func TestCropConfig(t *testing.T) {
+	t.Run("disabled_by_default", func(t *testing.T) {
+		cfg := mustLoad(t, minimal())
+		if cfg.Capture.Crop.Enabled() {
+			t.Error("crop should be off by default")
+		}
+		if got := cfg.Capture.Crop.FFmpegFilter(); got != "" {
+			t.Errorf("FFmpegFilter() = %q, want empty", got)
+		}
+	})
+
+	t.Run("filter_expression", func(t *testing.T) {
+		cases := []struct {
+			name string
+			crop CropConfig
+			want string
+		}{
+			{"none", CropConfig{}, ""},
+			{"left", CropConfig{Left: 100}, "crop=in_w-100:in_h-0:100:0"},
+			{"right", CropConfig{Right: 200}, "crop=in_w-200:in_h-0:0:0"},
+			{"top", CropConfig{Top: 50}, "crop=in_w-0:in_h-50:0:50"},
+			{"bottom", CropConfig{Bottom: 80}, "crop=in_w-0:in_h-80:0:0"},
+			{"left_and_right", CropConfig{Left: 100, Right: 200}, "crop=in_w-300:in_h-0:100:0"},
+			{"top_and_bottom", CropConfig{Top: 50, Bottom: 80}, "crop=in_w-0:in_h-130:0:50"},
+			{"all_four", CropConfig{Left: 100, Right: 200, Top: 50, Bottom: 80}, "crop=in_w-300:in_h-130:100:50"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				if got := tc.crop.FFmpegFilter(); got != tc.want {
+					t.Errorf("FFmpegFilter() = %q, want %q", got, tc.want)
+				}
+			})
+		}
+	})
+
+	t.Run("enabled_reports_any_edge", func(t *testing.T) {
+		for _, c := range []CropConfig{{Left: 1}, {Right: 1}, {Top: 1}, {Bottom: 1}} {
+			if !c.Enabled() {
+				t.Errorf("%+v should be enabled", c)
+			}
+		}
+		if (CropConfig{}).Enabled() {
+			t.Error("the zero value should be disabled")
+		}
+	})
+
+	t.Run("loaded_from_the_environment", func(t *testing.T) {
+		cfg := mustLoad(t, withEnv(map[string]string{
+			EnvCaptureCropLeft:   "100",
+			EnvCaptureCropRight:  "200",
+			EnvCaptureCropTop:    "50",
+			EnvCaptureCropBottom: "80",
+		}))
+		want := CropConfig{Left: 100, Right: 200, Top: 50, Bottom: 80}
+		if cfg.Capture.Crop != want {
+			t.Errorf("crop = %+v, want %+v", cfg.Capture.Crop, want)
+		}
+	})
+
+	t.Run("settable_by_flag", func(t *testing.T) {
+		cfg := mustLoad(t, minimal(), "--capture-crop-left=25", "--capture-crop-bottom=75")
+		if cfg.Capture.Crop.Left != 25 || cfg.Capture.Crop.Bottom != 75 {
+			t.Errorf("crop = %+v", cfg.Capture.Crop)
+		}
+	})
+
+	t.Run("negative_values_are_rejected", func(t *testing.T) {
+		for _, env := range []string{EnvCaptureCropLeft, EnvCaptureCropRight, EnvCaptureCropTop, EnvCaptureCropBottom} {
+			t.Run(env, func(t *testing.T) {
+				err := loadErr(t, withEnv(map[string]string{env: "-10"}))
+				if !strings.Contains(err.Error(), env) {
+					t.Errorf("err = %v, want it to mention %s", err, env)
+				}
+			})
+		}
+	})
+
+	t.Run("non_numeric_values_are_rejected", func(t *testing.T) {
+		err := loadErr(t, withEnv(map[string]string{EnvCaptureCropLeft: "a bit"}))
+		if !strings.Contains(err.Error(), EnvCaptureCropLeft) {
+			t.Errorf("err = %v", err)
+		}
+	})
+}
+
 func TestFlagNameMapping(t *testing.T) {
 	cases := map[string]string{
 		EnvRTSPHost:               "rtsp-host",
@@ -935,7 +1020,7 @@ func TestEverySpecHasAUniqueFlag(t *testing.T) {
 			t.Errorf("%s has no usage text", s.env)
 		}
 	}
-	if got := len(specs()); got != 36 {
+	if got := len(specs()); got != 40 {
 		t.Errorf("specs() has %d entries; update the test if a setting was added intentionally", got)
 	}
 }

@@ -127,6 +127,53 @@ tests:
       - isNull:
           path: data.SFTP_URL
 
+  - it: omits every crop key when no edge is trimmed
+    asserts:
+      - isNull:
+          path: data.CAPTURE_CROP_LEFT
+      - isNull:
+          path: data.CAPTURE_CROP_RIGHT
+      - isNull:
+          path: data.CAPTURE_CROP_TOP
+      - isNull:
+          path: data.CAPTURE_CROP_BOTTOM
+
+  - it: carries only the crop edges that are set
+    set:
+      capture.crop.left: 100
+      capture.crop.bottom: 80
+    asserts:
+      - equal:
+          path: data.CAPTURE_CROP_LEFT
+          value: "100"
+      - equal:
+          path: data.CAPTURE_CROP_BOTTOM
+          value: "80"
+      - isNull:
+          path: data.CAPTURE_CROP_RIGHT
+      - isNull:
+          path: data.CAPTURE_CROP_TOP
+
+  - it: carries all four crop edges
+    set:
+      capture.crop.left: 100
+      capture.crop.right: 200
+      capture.crop.top: 50
+      capture.crop.bottom: 80
+    asserts:
+      - equal:
+          path: data.CAPTURE_CROP_LEFT
+          value: "100"
+      - equal:
+          path: data.CAPTURE_CROP_RIGHT
+          value: "200"
+      - equal:
+          path: data.CAPTURE_CROP_TOP
+          value: "50"
+      - equal:
+          path: data.CAPTURE_CROP_BOTTOM
+          value: "80"
+
   - it: builds the listen address from the configured port
     asserts:
       - equal:

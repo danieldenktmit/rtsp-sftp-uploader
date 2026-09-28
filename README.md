@@ -101,6 +101,10 @@ Durations accept Go syntax (`90s`, `2m`) or a bare integer meaning seconds (`60`
 | `CAPTURE_FILENAME` | `image.jpg` | |
 | `CAPTURE_JPEG_QUALITY` | `2` | ffmpeg `-q:v`: 2 (best) to 31 (worst). |
 | `CAPTURE_TIMEOUT` | `30s` | Hard limit for one capture. Must exceed `RTSP_TIMEOUT`. |
+| `CAPTURE_CROP_LEFT` | `0` | Pixels trimmed from the left edge. |
+| `CAPTURE_CROP_RIGHT` | `0` | Pixels trimmed from the right edge. |
+| `CAPTURE_CROP_TOP` | `0` | Pixels trimmed from the top edge. |
+| `CAPTURE_CROP_BOTTOM` | `0` | Pixels trimmed from the bottom edge. |
 | `FFMPEG_PATH` | `ffmpeg` | |
 
 ### SFTP destination
@@ -145,6 +149,31 @@ sftp: either SFTP_URL or SFTP_HOST must be set
 SFTP_USERNAME: must be set
 sftp: provide a credential: set SFTP_PASSWORD or SFTP_PRIVATE_KEY_PATH
 sftp: configure host key verification: set SFTP_KNOWN_HOSTS_PATH or SFTP_HOST_KEY_FINGERPRINT, or explicitly set SFTP_INSECURE_IGNORE_HOST_KEY=true
+```
+
+---
+
+## Cropping
+
+Trim pixels from any combination of edges — to cut out a timestamp bar, a fisheye
+border, or a neighbour's garden:
+
+```bash
+CAPTURE_CROP_LEFT=100 CAPTURE_CROP_RIGHT=200 CAPTURE_CROP_TOP=50 CAPTURE_CROP_BOTTOM=80
+```
+
+A 1280x720 source then yields a 980x590 image: `1280-100-200` wide, `720-50-80`
+high, anchored 100px from the left and 50px from the top. Any subset works — set
+only `CAPTURE_CROP_TOP` to shave the top and nothing else.
+
+The crop is expressed relative to the source (`in_w`/`in_h`), so it keeps working
+if the camera changes resolution. Cropping is done by ffmpeg during decode, so it
+costs nothing extra and shrinks the uploaded file.
+
+Ask for more than the frame holds and the capture fails loudly:
+
+```
+ffmpeg failed: Invalid too big or non positive size for width '-720'
 ```
 
 ---
@@ -265,6 +294,7 @@ credentials either.
 | `knownhosts: key mismatch` right after install | `known_hosts` has no entry for this host at all | `ssh-keyscan -p <port> <host> >> known_hosts` |
 | `/readyz` 503 while `/healthz` is 200 | Captures or uploads are failing | `curl /status` and read `last_error` |
 | Image is black or stale | Camera needs a warm-up | Raise `CAPTURE_TIMEOUT`; check the camera's substream |
+| `Invalid too big or non positive size` | Crop exceeds the frame | Reduce `CAPTURE_CROP_*`; left+right must be less than the source width |
 | `sftp: creating remote directory` fails | No permission to create it | Pre-create the directory and set `SFTP_MKDIR=false` |
 
 ### Common RTSP paths

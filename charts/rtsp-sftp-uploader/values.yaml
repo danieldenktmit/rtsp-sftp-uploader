@@ -38,6 +38,15 @@ capture:
   jpegQuality: 2
   # Must be writable; an emptyDir is mounted here so the root filesystem can stay read-only.
   outputDir: /tmp
+  # Trim pixels from the edges of the captured frame. Any combination; 0 keeps
+  # that edge. Useful for cropping out a timestamp bar, a fisheye border, or a
+  # neighbour's garden. Expressed relative to the source, so it survives the
+  # camera changing resolution.
+  crop:
+    left: 0
+    right: 0
+    top: 0
+    bottom: 0
 
 sftp:
   # sftp://user:pass@host:port/folder. Supplies defaults for the settings below.

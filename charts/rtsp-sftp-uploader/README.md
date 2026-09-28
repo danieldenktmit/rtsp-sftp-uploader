@@ -50,6 +50,7 @@ value to set.
 | `capture.filename` | `image.jpg` | |
 | `capture.jpegQuality` | `2` | 2 (best) to 31 (worst). |
 | `capture.outputDir` | `/tmp` | An `emptyDir` is mounted here. |
+| `capture.crop.left` / `.right` / `.top` / `.bottom` | `0` | Pixels trimmed from each edge of the frame. Any combination; `0` keeps that edge. |
 
 ### SFTP destination
 

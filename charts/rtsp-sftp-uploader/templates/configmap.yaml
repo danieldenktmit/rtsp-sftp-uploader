@@ -23,6 +23,18 @@ data:
   CAPTURE_FILENAME: {{ .Values.capture.filename | quote }}
   CAPTURE_JPEG_QUALITY: {{ .Values.capture.jpegQuality | quote }}
   CAPTURE_OUTPUT_DIR: {{ .Values.capture.outputDir | quote }}
+  {{- if gt (int .Values.capture.crop.left) 0 }}
+  CAPTURE_CROP_LEFT: {{ .Values.capture.crop.left | quote }}
+  {{- end }}
+  {{- if gt (int .Values.capture.crop.right) 0 }}
+  CAPTURE_CROP_RIGHT: {{ .Values.capture.crop.right | quote }}
+  {{- end }}
+  {{- if gt (int .Values.capture.crop.top) 0 }}
+  CAPTURE_CROP_TOP: {{ .Values.capture.crop.top | quote }}
+  {{- end }}
+  {{- if gt (int .Values.capture.crop.bottom) 0 }}
+  CAPTURE_CROP_BOTTOM: {{ .Values.capture.crop.bottom | quote }}
+  {{- end }}
 
   {{- with .Values.sftp.host }}
   SFTP_HOST: {{ . | quote }}

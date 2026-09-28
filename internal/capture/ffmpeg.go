@@ -35,6 +35,7 @@ type FFmpegGrabber struct {
 	rtspTimeout time.Duration
 	timeout     time.Duration
 	quality     int
+	cropFilter  string
 	redactor    *config.Redactor
 	logger      *slog.Logger
 
@@ -65,6 +66,7 @@ func NewFFmpegGrabber(rtsp config.RTSPConfig, cap config.CaptureConfig, r *confi
 		rtspTimeout:    rtsp.Timeout,
 		timeout:        cap.Timeout,
 		quality:        cap.JPEGQuality,
+		cropFilter:     cap.Crop.FFmpegFilter(),
 		redactor:       r,
 		logger:         logger,
 		clock:          time.Now,
@@ -77,7 +79,7 @@ func (g *FFmpegGrabber) SourceURL() string { return g.redactedURL }
 
 // Args returns the exact ffmpeg argument list used to produce dst.
 func (g *FFmpegGrabber) Args(dst string) []string {
-	return []string{
+	args := []string{
 		"-hide_banner",
 		"-nostdin",
 		"-loglevel", "error",
@@ -86,12 +88,22 @@ func (g *FFmpegGrabber) Args(dst string) []string {
 		"-timeout", strconv.FormatInt(g.rtspTimeout.Microseconds(), 10),
 		"-i", g.sourceURL,
 		"-frames:v", "1",
+	}
+	// -vf is an output option, so it must follow -i.
+	if g.cropFilter != "" {
+		args = append(args, "-vf", g.cropFilter)
+	}
+	return append(args,
 		"-q:v", strconv.Itoa(g.quality),
 		"-f", "image2",
 		"-update", "1",
-		dst + partSuffix,
-	}
+		dst+partSuffix,
+	)
 }
+
+// CropFilter returns the ffmpeg filter applied to each frame, or "" when the
+// full frame is kept. Exported for logging and diagnostics.
+func (g *FFmpegGrabber) CropFilter() string { return g.cropFilter }
 
 // Grab captures one frame into dst. The file at dst is replaced atomically, so a
 // consumer polling it never observes a partially written image.
@@ -144,6 +156,7 @@ func (g *FFmpegGrabber) Grab(ctx context.Context, dst string) (Frame, error) {
 		"path", dst,
 		"bytes", info.Size(),
 		"duration", captured.Sub(started),
+		"crop", g.cropFilter,
 	)
 	return Frame{Path: dst, Size: info.Size(), CapturedAt: captured}, nil
 }

@@ -186,6 +186,57 @@ func TestArgs(t *testing.T) {
 		}
 	})
 
+	t.Run("no_crop_means_no_video_filter", func(t *testing.T) {
+		g := newGrabber(t, "success")
+		if slices.Contains(g.Args("/tmp/x.jpg"), "-vf") {
+			t.Errorf("unexpected -vf in %q", g.Args("/tmp/x.jpg"))
+		}
+		if g.CropFilter() != "" {
+			t.Errorf("CropFilter() = %q", g.CropFilter())
+		}
+	})
+
+	t.Run("crop_adds_a_video_filter_after_the_input", func(t *testing.T) {
+		cap := testCapture()
+		cap.Crop = config.CropConfig{Left: 100, Right: 200, Top: 50, Bottom: 80}
+		g, err := NewFFmpegGrabber(testRTSP(), cap, nil, nil)
+		if err != nil {
+			t.Fatalf("NewFFmpegGrabber: %v", err)
+		}
+		args := g.Args("/tmp/x.jpg")
+
+		i := slices.Index(args, "-vf")
+		if i < 0 {
+			t.Fatalf("no -vf in %q", args)
+		}
+		if got := args[i+1]; got != "crop=in_w-300:in_h-130:100:50" {
+			t.Errorf("filter = %q", got)
+		}
+		// -vf is an output option: it must come after -i.
+		if input := slices.Index(args, "-i"); i < input {
+			t.Errorf("-vf at %d precedes -i at %d", i, input)
+		}
+		if got := args[len(args)-1]; got != "/tmp/x.jpg"+partSuffix {
+			t.Errorf("last arg = %q, want the part file", got)
+		}
+		if g.CropFilter() == "" {
+			t.Error("CropFilter() should report the filter")
+		}
+	})
+
+	t.Run("a_single_cropped_edge", func(t *testing.T) {
+		cap := testCapture()
+		cap.Crop = config.CropConfig{Top: 50}
+		g, err := NewFFmpegGrabber(testRTSP(), cap, nil, nil)
+		if err != nil {
+			t.Fatalf("NewFFmpegGrabber: %v", err)
+		}
+		args := g.Args("/tmp/x.jpg")
+		if got := args[slices.Index(args, "-vf")+1]; got != "crop=in_w-0:in_h-50:0:50" {
+			t.Errorf("filter = %q", got)
+		}
+	})
+
 	t.Run("output_is_the_part_file", func(t *testing.T) {
 		g := newGrabber(t, "success")
 		args := g.Args("/tmp/image.jpg")

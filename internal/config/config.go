@@ -37,6 +37,10 @@ const (
 	EnvCaptureFilename    = "CAPTURE_FILENAME"
 	EnvCaptureJPEGQuality = "CAPTURE_JPEG_QUALITY"
 	EnvCaptureTimeout     = "CAPTURE_TIMEOUT"
+	EnvCaptureCropLeft    = "CAPTURE_CROP_LEFT"
+	EnvCaptureCropRight   = "CAPTURE_CROP_RIGHT"
+	EnvCaptureCropTop     = "CAPTURE_CROP_TOP"
+	EnvCaptureCropBottom  = "CAPTURE_CROP_BOTTOM"
 	EnvFFmpegPath         = "FFMPEG_PATH"
 
 	EnvSFTPURL            = "SFTP_URL"
@@ -96,6 +100,31 @@ type CaptureConfig struct {
 	JPEGQuality int
 	Timeout     time.Duration
 	FFmpegPath  string
+	Crop        CropConfig
+}
+
+// CropConfig trims pixels from the edges of the captured frame. All four are
+// independent; any combination may be used, and zero means "keep that edge".
+type CropConfig struct {
+	Left   int
+	Right  int
+	Top    int
+	Bottom int
+}
+
+// Enabled reports whether any edge is trimmed.
+func (c CropConfig) Enabled() bool {
+	return c.Left > 0 || c.Right > 0 || c.Top > 0 || c.Bottom > 0
+}
+
+// FFmpegFilter renders the crop as an ffmpeg filter expression. It is written in
+// terms of in_w/in_h so the source resolution does not need to be known, which
+// means the same configuration survives a camera switching resolution.
+func (c CropConfig) FFmpegFilter() string {
+	if !c.Enabled() {
+		return ""
+	}
+	return fmt.Sprintf("crop=in_w-%d:in_h-%d:%d:%d", c.Left+c.Right, c.Top+c.Bottom, c.Left, c.Top)
 }
 
 // SFTPConfig describes the upload destination.
@@ -191,6 +220,10 @@ func specs() []spec {
 		{EnvCaptureFilename, "image.jpg", kindString, "local JPEG filename"},
 		{EnvCaptureJPEGQuality, "2", kindInt, "ffmpeg JPEG quality, 2 (best) to 31 (worst)"},
 		{EnvCaptureTimeout, "30s", kindDuration, "hard time limit for one capture"},
+		{EnvCaptureCropLeft, "0", kindInt, "pixels to trim from the left edge of the frame"},
+		{EnvCaptureCropRight, "0", kindInt, "pixels to trim from the right edge of the frame"},
+		{EnvCaptureCropTop, "0", kindInt, "pixels to trim from the top edge of the frame"},
+		{EnvCaptureCropBottom, "0", kindInt, "pixels to trim from the bottom edge of the frame"},
 		{EnvFFmpegPath, "ffmpeg", kindString, "path to the ffmpeg binary"},
 
 		{EnvSFTPURL, "", kindString, "sftp://user:pass@host:port/folder; supplies defaults for the settings below"},
@@ -342,6 +375,12 @@ func load(lookup Lookup, args []string, out io.Writer) (*Config, error) {
 			JPEGQuality: r.integer(EnvCaptureJPEGQuality),
 			Timeout:     r.duration(EnvCaptureTimeout),
 			FFmpegPath:  r.str(EnvFFmpegPath),
+			Crop: CropConfig{
+				Left:   r.integer(EnvCaptureCropLeft),
+				Right:  r.integer(EnvCaptureCropRight),
+				Top:    r.integer(EnvCaptureCropTop),
+				Bottom: r.integer(EnvCaptureCropBottom),
+			},
 		},
 		SFTP: SFTPConfig{
 			URL:                   r.str(EnvSFTPURL),
@@ -582,6 +621,19 @@ func (c *Config) Validate() error {
 	}
 	if c.Capture.FFmpegPath == "" {
 		add("%s: must not be empty", EnvFFmpegPath)
+	}
+	for _, edge := range []struct {
+		env string
+		px  int
+	}{
+		{EnvCaptureCropLeft, c.Capture.Crop.Left},
+		{EnvCaptureCropRight, c.Capture.Crop.Right},
+		{EnvCaptureCropTop, c.Capture.Crop.Top},
+		{EnvCaptureCropBottom, c.Capture.Crop.Bottom},
+	} {
+		if edge.px < 0 {
+			add("%s: %d must not be negative", edge.env, edge.px)
+		}
 	}
 
 	// --- SFTP ---
