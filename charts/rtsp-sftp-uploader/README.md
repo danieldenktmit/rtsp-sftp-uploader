@@ -71,7 +71,7 @@ value to set.
 | `sftp.retryAttempts` | `3` | |
 | `sftp.retryBackoff` | `2s` | |
 | `sftp.knownHosts` | `""` | known_hosts contents; mounted at `/etc/rtsp-sftp-uploader/known_hosts`. |
-| `sftp.hostKeyFingerprint` | `""` | `SHA256:...` |
+| `sftp.hostKeyFingerprint` | `""` | One or more `SHA256:...` values, comma- or space-separated. Pin every key type the server publishes, or a negotiated-but-unpinned type causes `host key mismatch`. |
 | `sftp.insecureIgnoreHostKey` | `false` | |
 | `existingSecret` | `""` | Reuse an existing Secret instead of creating one. |
 

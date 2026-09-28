@@ -609,8 +609,10 @@ func (c *Config) Validate() error {
 	if c.SFTP.Timeout <= 0 {
 		add("%s: must be greater than zero", EnvSFTPTimeout)
 	}
-	if err := validateFingerprint(EnvSFTPHostKeyFingerprint, c.SFTP.HostKeyFingerprint); err != nil {
-		errs = append(errs, err)
+	for _, fp := range c.SFTP.HostKeyFingerprints() {
+		if err := validateFingerprint(EnvSFTPHostKeyFingerprint, fp); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	switch strategies := c.hostKeyStrategies(); {
 	case strategies == 0:
@@ -842,6 +844,26 @@ func splitPathQuery(p string) (string, string) {
 		p = "/" + p
 	}
 	return p, q
+}
+
+// HostKeyFingerprints splits the configured value into individual fingerprints.
+//
+// Several may be given, separated by commas or whitespace. A server usually
+// offers more than one host key type and the client negotiates exactly one of
+// them, so pinning a single fingerprint fails whenever the negotiated type is
+// not the one that was pinned. Listing every fingerprint the server publishes
+// keeps the pin strict while making it work regardless of which key is chosen.
+func (s SFTPConfig) HostKeyFingerprints() []string {
+	fields := strings.FieldsFunc(s.HostKeyFingerprint, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+	})
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // Addr is the host:port pair the SFTP client dials.

@@ -138,7 +138,7 @@ func hostKeyCallback(cfg config.SFTPConfig, logger *slog.Logger) (ssh.HostKeyCal
 		}
 		return cb, nil
 	case cfg.HostKeyFingerprint != "":
-		return fingerprintCallback(cfg.HostKeyFingerprint), nil
+		return fingerprintCallback(cfg.HostKeyFingerprints()...), nil
 	default:
 		logger.Warn("SFTP host key verification is disabled; the connection is vulnerable to interception",
 			"setting", config.EnvSFTPInsecureIgnoreHost)
@@ -146,18 +146,41 @@ func hostKeyCallback(cfg config.SFTPConfig, logger *slog.Logger) (ssh.HostKeyCal
 	}
 }
 
-// fingerprintCallback pins a single SHA256 host key fingerprint. The configured
-// value is accepted with or without the "SHA256:" prefix.
-func fingerprintCallback(want string) ssh.HostKeyCallback {
-	want = strings.TrimSpace(want)
-	normalizedWant := strings.TrimPrefix(want, fingerprintPrefix)
+// fingerprintCallback pins one or more SHA256 host key fingerprints; the
+// connection is accepted when the presented key matches any of them. Each value
+// is accepted with or without the "SHA256:" prefix.
+//
+// Accepting several is what makes pinning usable: a server typically publishes
+// an RSA and an ed25519 host key and the client negotiates only one, so a single
+// pin fails whenever the other type is chosen.
+func fingerprintCallback(want ...string) ssh.HostKeyCallback {
+	normalized := make([]string, 0, len(want))
+	for _, w := range want {
+		w = strings.TrimSpace(w)
+		if i := strings.IndexByte(w, ':'); i >= 0 && strings.EqualFold(w[:i], "sha256") {
+			w = w[i+1:]
+		}
+		if w != "" {
+			normalized = append(normalized, w)
+		}
+	}
+
 	return func(hostname string, _ net.Addr, key ssh.PublicKey) error {
 		got := ssh.FingerprintSHA256(key)
-		if strings.TrimPrefix(got, fingerprintPrefix) == normalizedWant {
-			return nil
+		gotBody := strings.TrimPrefix(got, fingerprintPrefix)
+		for _, w := range normalized {
+			if gotBody == w {
+				return nil
+			}
 		}
-		return fmt.Errorf("sftp: host key mismatch for %s: server presented %s, expected %s%s",
-			hostname, got, fingerprintPrefix, normalizedWant)
+		expected := make([]string, len(normalized))
+		for i, w := range normalized {
+			expected[i] = fingerprintPrefix + w
+		}
+		return fmt.Errorf("sftp: host key mismatch for %s: server presented %s (%s), expected one of [%s]. "+
+			"A server often publishes several host key types and only one is negotiated; "+
+			"pin them all with: ssh-keyscan -p <port> <host> | ssh-keygen -lf -",
+			hostname, got, key.Type(), strings.Join(expected, " "))
 	}
 }
 

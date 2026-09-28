@@ -111,7 +111,7 @@ func TestLoadFullEnvironment(t *testing.T) {
 		EnvSFTPRemoteDir:            "/photos/cam1",
 		EnvSFTPRemoteFilename:       "latest.jpg",
 		EnvSFTPTimeout:              "40s",
-		EnvSFTPHostKeyFingerprint:   "SHA256:abcdefghijklmnop",
+		EnvSFTPHostKeyFingerprint:   "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		EnvSFTPMkdir:                "false",
 		EnvSFTPAtomic:               "false",
 		EnvSFTPFileMode:             "0600",
@@ -311,13 +311,13 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name:     "two_host_key_strategies",
-			env:      map[string]string{EnvSFTPHostKeyFingerprint: "SHA256:xyz"},
+			env:      map[string]string{EnvSFTPHostKeyFingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
 			mentions: []string{"mutually exclusive"},
 		},
 		{
 			name: "three_host_key_strategies",
 			env: map[string]string{
-				EnvSFTPHostKeyFingerprint: "SHA256:xyz",
+				EnvSFTPHostKeyFingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 				EnvSFTPKnownHostsPath:     "/etc/known_hosts",
 			},
 			mentions: []string{"mutually exclusive"},
@@ -440,6 +440,50 @@ func TestValidate(t *testing.T) {
 		}
 		if got != "rtsp://10.0.0.5:554/live" {
 			t.Errorf("ResolvedURL() = %q", got)
+		}
+	})
+
+	t.Run("host_key_fingerprint_format", func(t *testing.T) {
+		// Hosting control panels (IONOS among them) still display MD5. Pasting
+		// that in used to fail later as an opaque "host key mismatch".
+		rejected := []struct{ name, fp, mentions string }{
+			{"md5_hex", "e5f04b35d161e4c14d6c764130fb53ff", "MD5"},
+			{"md5_colons", "e5:f0:4b:35:d1:61:e4:c1:4d:6c:76:41:30:fb:53:ff", "MD5"},
+			{"md5_prefixed", "MD5:e5:f0:4b:35:d1:61:e4:c1:4d:6c:76:41:30:fb:53:ff", "MD5"},
+			{"md5_uppercase", "E5F04B35D161E4C14D6C764130FB53FF", "MD5"},
+			{"garbage", "not-a-fingerprint", "not a SHA256 fingerprint"},
+			{"too_short", "SHA256:abc", "not a SHA256 fingerprint"},
+			{"sha1_hex", "da39a3ee5e6b4b0d3255bfef95601890afd80709", "not a SHA256 fingerprint"},
+		}
+		for _, tc := range rejected {
+			t.Run(tc.name, func(t *testing.T) {
+				env := withEnv(map[string]string{EnvSFTPHostKeyFingerprint: tc.fp})
+				delete(env, EnvSFTPInsecureIgnoreHost) // fingerprint is then the only strategy
+				err := loadErr(t, env)
+				if !strings.Contains(err.Error(), tc.mentions) {
+					t.Errorf("err = %v\nwant it to mention %q", err, tc.mentions)
+				}
+				if !strings.Contains(err.Error(), "ssh-keyscan") {
+					t.Errorf("err = %v\nwant it to say how to get the right value", err)
+				}
+			})
+		}
+
+		accepted := []struct{ name, fp string }{
+			{"with_prefix", "SHA256:09YVpKZ5e28UhFW+IJVe6poOVt1ZAVZvdOIGRvlFZS8"},
+			{"without_prefix", "09YVpKZ5e28UhFW+IJVe6poOVt1ZAVZvdOIGRvlFZS8"},
+			{"lowercase_prefix", "sha256:09YVpKZ5e28UhFW+IJVe6poOVt1ZAVZvdOIGRvlFZS8"},
+			{"padded", "SHA256:09YVpKZ5e28UhFW+IJVe6poOVt1ZAVZvdOIGRvlFZS8="},
+			{"with_surrounding_space", "  SHA256:09YVpKZ5e28UhFW+IJVe6poOVt1ZAVZvdOIGRvlFZS8  "},
+		}
+		for _, tc := range accepted {
+			t.Run(tc.name, func(t *testing.T) {
+				env := withEnv(map[string]string{EnvSFTPHostKeyFingerprint: tc.fp})
+				delete(env, EnvSFTPInsecureIgnoreHost)
+				if cfg := mustLoad(t, env); cfg.SFTP.HostKeyFingerprint == "" {
+					t.Error("fingerprint was not applied")
+				}
+			})
 		}
 	})
 
@@ -810,6 +854,59 @@ func TestEffectiveReadyMaxStaleness(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHostKeyFingerprints(t *testing.T) {
+	const a = "SHA256:09YVpKZ5e28UhFW+IJVe6poOVt1ZAVZvdOIGRvlFZS8"
+	const b = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+	cases := []struct {
+		name string
+		in   string
+		want int
+	}{
+		{"empty", "", 0},
+		{"single", a, 1},
+		{"comma_separated", a + "," + b, 2},
+		{"space_separated", a + " " + b, 2},
+		{"semicolon_separated", a + ";" + b, 2},
+		{"newline_separated", a + "\n" + b, 2},
+		{"mixed_with_padding", "  " + a + " ,  " + b + "  ", 2},
+		{"trailing_separator", a + ",", 1},
+		{"only_separators", " , ; ", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SFTPConfig{HostKeyFingerprint: tc.in}.HostKeyFingerprints()
+			if len(got) != tc.want {
+				t.Fatalf("HostKeyFingerprints() = %q, want %d entries", got, tc.want)
+			}
+			for _, fp := range got {
+				if strings.ContainsAny(fp, " ,;\n\t") {
+					t.Errorf("entry %q still contains a separator", fp)
+				}
+			}
+		})
+	}
+
+	t.Run("every_entry_in_a_list_is_validated", func(t *testing.T) {
+		env := withEnv(map[string]string{
+			// Second entry is MD5: the whole list must be rejected.
+			EnvSFTPHostKeyFingerprint: a + ",e5f04b35d161e4c14d6c764130fb53ff",
+		})
+		delete(env, EnvSFTPInsecureIgnoreHost)
+		if err := loadErr(t, env); !strings.Contains(err.Error(), "MD5") {
+			t.Errorf("err = %v, want it to flag the MD5 entry", err)
+		}
+	})
+
+	t.Run("a_valid_list_is_accepted", func(t *testing.T) {
+		env := withEnv(map[string]string{EnvSFTPHostKeyFingerprint: a + " " + b})
+		delete(env, EnvSFTPInsecureIgnoreHost)
+		if cfg := mustLoad(t, env); len(cfg.SFTP.HostKeyFingerprints()) != 2 {
+			t.Error("both fingerprints should survive loading")
+		}
+	})
 }
 
 func TestFlagNameMapping(t *testing.T) {

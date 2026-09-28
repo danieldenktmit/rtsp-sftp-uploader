@@ -118,7 +118,7 @@ Durations accept Go syntax (`90s`, `2m`) or a bare integer meaning seconds (`60`
 | `SFTP_REMOTE_FILENAME` | = `CAPTURE_FILENAME` | |
 | `SFTP_TIMEOUT` | `30s` | Dial, handshake and transfer budget. |
 | `SFTP_KNOWN_HOSTS_PATH` | — | See [Host key verification](#host-key-verification). |
-| `SFTP_HOST_KEY_FINGERPRINT` | — | |
+| `SFTP_HOST_KEY_FINGERPRINT` | — | One or more SHA256 fingerprints, comma- or space-separated. Pin every key type the server publishes. |
 | `SFTP_INSECURE_IGNORE_HOST_KEY` | `false` | |
 | `SFTP_MKDIR` | `true` | Create the remote directory if missing. |
 | `SFTP_ATOMIC` | `true` | Upload to a temporary name, then rename into place. |
@@ -163,7 +163,35 @@ ssh-keyscan -p 22 files.example.com 2>/dev/null | ssh-keygen -lf -
 export SFTP_HOST_KEY_FINGERPRINT='SHA256:NeNTWOHzHNghhrcfk6JzeBEr9Rd2UjxaSMp3YdIlEuo'
 ```
 
-The `SHA256:` prefix is optional.
+The `SHA256:` prefix is optional, and only the `SHA256:...` token is wanted — not
+the whole `ssh-keygen` line.
+
+> **Pin every key type the server publishes, not just one.** Most servers offer
+> both an RSA and an ed25519 host key and the client negotiates exactly one of
+> them. If you pin only the ed25519 fingerprint and RSA gets negotiated, you get
+> `host key mismatch` on a fingerprint that is perfectly valid for that host.
+> Separate several with commas or spaces:
+>
+> ```bash
+> export SFTP_HOST_KEY_FINGERPRINT="$(ssh-keyscan -p 22 files.example.com 2>/dev/null \
+>   | ssh-keygen -lf - | awk '{print $2}' | paste -sd, -)"
+> ```
+>
+> Listing them all keeps the pin strict — an unknown key is still rejected.
+
+> **Hosting panels often show MD5.** IONOS, among others, displays the legacy
+> form — 32 hex digits such as `e5f04b35d161e4c14d6c764130fb53ff`, sometimes
+> colon-separated. That is not accepted here, and the startup error will say so.
+> To get the SHA256 while still checking it against the panel, print both formats
+> for the same key and compare the MD5 line with what the panel shows:
+>
+> ```bash
+> ssh-keyscan -p 22 files.example.com 2>/dev/null > /tmp/hk
+> ssh-keygen -lf /tmp/hk -E md5      # compare this with the control panel
+> ssh-keygen -lf /tmp/hk -E sha256   # use this value
+> ```
+>
+> If the MD5 matches the panel, the SHA256 from the same scan is trustworthy.
 
 **2. Use a `known_hosts` file:**
 
@@ -233,7 +261,7 @@ credentials either.
 | `capture did not finish within 30s` | Long keyframe interval, or an unreachable camera | Raise `CAPTURE_TIMEOUT`; a capture cannot complete faster than the camera's GOP length (a 250-frame GOP at 15 fps is ~17 s). Shorten the camera's I-frame interval if you can. |
 | `ffmpeg output is not a JPEG` | ffmpeg wrote a diagnostic instead of an image | Run with `LOG_LEVEL=debug` and read the captured stderr in the error |
 | `ssh handshake ... unable to authenticate` | Wrong SFTP password or key | Test with `sftp -P <port> user@host` |
-| `host key mismatch` | Server rekeyed, or the wrong fingerprint | Re-run `ssh-keyscan` and update the fingerprint / `known_hosts` |
+| `host key mismatch` | Server rekeyed, or only one of several key types was pinned | Pin **all** fingerprints from `ssh-keyscan <host> \| ssh-keygen -lf -`, comma-separated |
 | `knownhosts: key mismatch` right after install | `known_hosts` has no entry for this host at all | `ssh-keyscan -p <port> <host> >> known_hosts` |
 | `/readyz` 503 while `/healthz` is 200 | Captures or uploads are failing | `curl /status` and read `last_error` |
 | Image is black or stale | Camera needs a warm-up | Raise `CAPTURE_TIMEOUT`; check the camera's substream |

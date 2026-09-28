@@ -350,6 +350,86 @@ func TestUploadHostKeyVerification(t *testing.T) {
 		}
 	})
 
+	t.Run("pinning_only_the_unnegotiated_key_type_fails", func(t *testing.T) {
+		// A server publishing both RSA and ed25519 negotiates only one of them.
+		// Pinning the other is a valid fingerprint for the host but still cannot
+		// match -- the trap this multi-value support exists to solve.
+		ts := startTestServer(t, testServerOpts{User: testUser, Password: testPassword, AlsoOfferRSA: true})
+		cfg := baseConfig(ts)
+		cfg.InsecureIgnoreHostKey = false
+		remote := path.Join(ts.Root, "image.jpg")
+
+		// Determine which key the client actually negotiates.
+		var presented gossh.PublicKey
+		probe := baseConfig(ts)
+		probe.InsecureIgnoreHostKey = true
+		u := newUploader(t, probe, remote)
+		u.hostKey = func(_ string, _ net.Addr, key gossh.PublicKey) error {
+			presented = key
+			return nil
+		}
+		if err := u.Upload(t.Context(), localFile(t, imageBody)); err != nil {
+			t.Fatalf("probe upload: %v", err)
+		}
+		if presented == nil {
+			t.Fatal("no host key was presented")
+		}
+
+		other := ts.HostKey
+		if gossh.FingerprintSHA256(presented) == gossh.FingerprintSHA256(ts.HostKey) {
+			other = ts.RSAHostKey
+		}
+		cfg.HostKeyFingerprint = gossh.FingerprintSHA256(other)
+
+		err := newUploader(t, cfg, remote).Upload(t.Context(), localFile(t, imageBody))
+		if err == nil {
+			t.Fatal("expected a mismatch when pinning the key type that is not negotiated")
+		}
+		if !strings.Contains(err.Error(), "ssh-keyscan") {
+			t.Errorf("err = %v, want it to explain how to pin every key type", err)
+		}
+	})
+
+	t.Run("pinning_every_published_key_type_succeeds", func(t *testing.T) {
+		ts := startTestServer(t, testServerOpts{User: testUser, Password: testPassword, AlsoOfferRSA: true})
+		cfg := baseConfig(ts)
+		cfg.InsecureIgnoreHostKey = false
+		cfg.HostKeyFingerprint = gossh.FingerprintSHA256(ts.HostKey) + " " + gossh.FingerprintSHA256(ts.RSAHostKey)
+		remote := path.Join(ts.Root, "image.jpg")
+
+		if err := newUploader(t, cfg, remote).Upload(t.Context(), localFile(t, imageBody)); err != nil {
+			t.Fatalf("Upload: %v", err)
+		}
+		assertRemote(t, remote, imageBody)
+	})
+
+	t.Run("a_comma_separated_list_works_too", func(t *testing.T) {
+		ts := startTestServer(t, testServerOpts{User: testUser, Password: testPassword, AlsoOfferRSA: true})
+		cfg := baseConfig(ts)
+		cfg.InsecureIgnoreHostKey = false
+		cfg.HostKeyFingerprint = gossh.FingerprintSHA256(ts.HostKey) + "," + gossh.FingerprintSHA256(ts.RSAHostKey)
+		remote := path.Join(ts.Root, "image.jpg")
+
+		if err := newUploader(t, cfg, remote).Upload(t.Context(), localFile(t, imageBody)); err != nil {
+			t.Fatalf("Upload: %v", err)
+		}
+	})
+
+	t.Run("a_list_of_wrong_fingerprints_still_fails", func(t *testing.T) {
+		ts := startTestServer(t, testServerOpts{User: testUser, Password: testPassword, AlsoOfferRSA: true})
+		cfg := baseConfig(ts)
+		cfg.InsecureIgnoreHostKey = false
+		cfg.HostKeyFingerprint = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA,SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+		remote := path.Join(ts.Root, "image.jpg")
+
+		if err := newUploader(t, cfg, remote).Upload(t.Context(), localFile(t, imageBody)); err == nil {
+			t.Fatal("a list of wrong fingerprints must still be rejected")
+		}
+		if _, statErr := os.Stat(remote); statErr == nil {
+			t.Error("nothing may be uploaded when verification fails")
+		}
+	})
+
 	t.Run("fingerprint_pin_rejects_a_mismatch", func(t *testing.T) {
 		ts := startTestServer(t, testServerOpts{User: testUser, Password: testPassword})
 		cfg := baseConfig(ts)
