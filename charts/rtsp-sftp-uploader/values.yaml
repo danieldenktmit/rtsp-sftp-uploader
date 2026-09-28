@@ -133,13 +133,19 @@ securityContext:
     drop:
       - ALL
 
+# Measured against a 1920x1080 H.264 stream: memory peaks at ~150Mi during the
+# ffmpeg decode burst and idles at ~8Mi; CPU peaks at ~555m. A 96Mi limit is
+# OOMKilled before the first capture completes, so do not trim memory below
+# ~256Mi for a main-stream camera (a 640x480 sub-stream peaks at ~72Mi).
+# The CPU limit only stretches the capture: ~3s at 1000m, ~5s at 500m, ~6.5s at
+# 250m for 1080p -- all far inside capture.timeout, so a small Pi is fine.
 resources:
   requests:
-    cpu: 25m
-    memory: 64Mi
+    cpu: 50m
+    memory: 128Mi
   limits:
-    cpu: 500m
-    memory: 256Mi
+    cpu: 1000m
+    memory: 320Mi
 
 # The emptyDir mounted at capture.outputDir.
 tmpVolume:

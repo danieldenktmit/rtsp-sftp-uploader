@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -540,6 +541,9 @@ func (c *Config) Validate() error {
 	add := func(format string, a ...any) { errs = append(errs, fmt.Errorf(format, a...)) }
 
 	// --- RTSP ---
+	if err := validateHost(EnvRTSPHost, c.RTSP.Host, EnvRTSPURL, EnvRTSPPort, EnvRTSPPath); err != nil {
+		errs = append(errs, err)
+	}
 	if c.RTSP.URL == "" && c.RTSP.Host == "" {
 		add("rtsp: either %s or %s must be set", EnvRTSPURL, EnvRTSPHost)
 	} else if _, err := c.RTSP.ResolvedURL(); err != nil {
@@ -581,6 +585,9 @@ func (c *Config) Validate() error {
 	}
 
 	// --- SFTP ---
+	if err := validateHost(EnvSFTPHost, c.SFTP.Host, EnvSFTPURL, EnvSFTPPort, EnvSFTPRemoteDir); err != nil {
+		errs = append(errs, err)
+	}
 	if c.SFTP.URL == "" && c.SFTP.Host == "" {
 		add("sftp: either %s or %s must be set", EnvSFTPURL, EnvSFTPHost)
 	}
@@ -601,6 +608,9 @@ func (c *Config) Validate() error {
 	}
 	if c.SFTP.Timeout <= 0 {
 		add("%s: must be greater than zero", EnvSFTPTimeout)
+	}
+	if err := validateFingerprint(EnvSFTPHostKeyFingerprint, c.SFTP.HostKeyFingerprint); err != nil {
+		errs = append(errs, err)
 	}
 	switch strategies := c.hostKeyStrategies(); {
 	case strategies == 0:
@@ -650,6 +660,63 @@ func (c *Config) hostKeyStrategies() int {
 		n++
 	}
 	return n
+}
+
+// validateHost rejects the common mistakes of pasting a whole URL, a host:port
+// pair, or a path into a bare host setting. Left unchecked these build a
+// syntactically valid but nonsensical URL that only fails much later, at connect
+// time, with an error that points nowhere near the actual cause.
+func validateHost(env, host, urlEnv, portEnv, pathEnv string) error {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return nil // emptiness is reported by the caller's own check
+	}
+	if strings.Contains(host, "://") {
+		return fmt.Errorf("%s: %q must be a bare hostname or IP with no scheme; set %s to a full URL instead, or use %s=%s",
+			env, host, urlEnv, env, strings.TrimPrefix(host[strings.Index(host, "://")+3:], "/"))
+	}
+	if i := strings.IndexAny(host, "/?"); i >= 0 {
+		return fmt.Errorf("%s: %q must not contain a path; set the host alone and put the rest in %s",
+			env, host, pathEnv)
+	}
+	// A colon is only legitimate here as part of an IPv6 literal.
+	if strings.Contains(host, ":") && net.ParseIP(host) == nil {
+		return fmt.Errorf("%s: %q must not include a port; set the port with %s", env, host, portEnv)
+	}
+	return nil
+}
+
+// md5Hex matches an MD5 fingerprint, with or without the colons that ssh-keygen
+// prints: 32 hex digits.
+var md5Hex = regexp.MustCompile(`^(?i)(?:[0-9a-f]{2}:){15}[0-9a-f]{2}$|^(?i)[0-9a-f]{32}$`)
+
+// sha256Body matches the base64 body of a SHA256 fingerprint: 32 bytes,
+// unpadded, so exactly 43 characters.
+var sha256Body = regexp.MustCompile(`^[A-Za-z0-9+/]{43}=?$`)
+
+// validateFingerprint rejects fingerprints in a format this setting cannot use.
+// Many hosting control panels (IONOS among them) still display the legacy MD5
+// form, and pasting that in would otherwise fail much later as an opaque
+// "host key mismatch" at connect time.
+func validateFingerprint(env, fp string) error {
+	fp = strings.TrimSpace(fp)
+	if fp == "" {
+		return nil
+	}
+	body := fp
+	if i := strings.IndexByte(fp, ':'); i >= 0 && strings.EqualFold(fp[:i], "sha256") {
+		body = fp[i+1:]
+	}
+
+	if strings.HasPrefix(strings.ToLower(fp), "md5:") || md5Hex.MatchString(fp) {
+		return fmt.Errorf("%s: %q is an MD5 fingerprint, but this setting takes SHA256. "+
+			"Get the SHA256 form with: ssh-keyscan -p <port> <host> | ssh-keygen -lf -", env, fp)
+	}
+	if !sha256Body.MatchString(body) {
+		return fmt.Errorf("%s: %q is not a SHA256 fingerprint (expected %q followed by 43 base64 characters). "+
+			"Get it with: ssh-keyscan -p <port> <host> | ssh-keygen -lf -", env, fp, "SHA256:")
+	}
+	return nil
 }
 
 func validateFilename(env, name string) error {

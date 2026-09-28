@@ -92,7 +92,7 @@ Exactly one of `sftp.knownHosts`, `sftp.hostKeyFingerprint` and
 | `serviceAccount.automountServiceAccountToken` | `false` | |
 | `podSecurityContext` | non-root 65532, `RuntimeDefault` seccomp | |
 | `securityContext` | read-only rootfs, all capabilities dropped | |
-| `resources` | 25m/64Mi requests, 500m/256Mi limits | |
+| `resources` | 50m/128Mi requests, 1000m/320Mi limits | Measured: 1080p peaks ~150Mi and ~555m. A 96Mi limit is OOMKilled. |
 | `tmpVolume.sizeLimit` / `.medium` | `64Mi` / `""` | Set `medium: Memory` for a tmpfs. |
 | `extraEnv` / `extraEnvFrom` | `[]` | |
 | `podAnnotations` / `podLabels` | `{}` | |

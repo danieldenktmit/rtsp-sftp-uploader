@@ -301,10 +301,16 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.containers[0].resources.requests.cpu
-          value: 25m
+          value: 50m
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests.memory
+          value: 128Mi
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.cpu
+          value: 1000m
       - equal:
           path: spec.template.spec.containers[0].resources.limits.memory
-          value: 256Mi
+          value: 320Mi
 
   - it: uses the created ServiceAccount and does not mount its token
     template: deployment.yaml

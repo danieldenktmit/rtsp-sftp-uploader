@@ -84,7 +84,7 @@ Durations accept Go syntax (`90s`, `2m`) or a bare integer meaning seconds (`60`
 | Variable | Default | Description |
 |---|---|---|
 | `RTSP_URL` | — | Full URL, e.g. `rtsp://cam.lan:554/Streaming/Channels/101`. Takes precedence over host/port/path. |
-| `RTSP_HOST` | — | Camera hostname or IP. Required unless `RTSP_URL` is set. |
+| `RTSP_HOST` | — | Camera hostname or IP, bare: no scheme, port or path (use `RTSP_URL` for a full URL). Required unless `RTSP_URL` is set. |
 | `RTSP_PORT` | `554` | |
 | `RTSP_PATH` | `/` | Stream path; a query string is preserved. |
 | `RTSP_USERNAME` | — | |
@@ -108,7 +108,7 @@ Durations accept Go syntax (`90s`, `2m`) or a bare integer meaning seconds (`60`
 | Variable | Default | Description |
 |---|---|---|
 | `SFTP_URL` | — | `sftp://user:pass@host:port/folder`. Supplies defaults for the settings below. |
-| `SFTP_HOST` | — | Required unless `SFTP_URL` is set. |
+| `SFTP_HOST` | — | Hostname or IP, bare: no scheme, port or path. Required unless `SFTP_URL` is set. |
 | `SFTP_PORT` | `22` | |
 | `SFTP_USERNAME` | — | Required. |
 | `SFTP_PASSWORD` | — | Required unless a private key is given. |

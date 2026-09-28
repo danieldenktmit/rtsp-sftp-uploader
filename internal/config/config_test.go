@@ -389,6 +389,60 @@ func TestValidate(t *testing.T) {
 		})
 	}
 
+	t.Run("host_must_be_bare", func(t *testing.T) {
+		// Pasting a URL, a host:port pair or a path into a bare host setting used
+		// to build a nonsensical URL that only failed at connect time.
+		cases := []struct {
+			name     string
+			env      map[string]string
+			mentions []string
+		}{
+			{"rtsp_scheme_in_host", map[string]string{EnvRTSPHost: "rtsp://10.0.0.5"}, []string{EnvRTSPHost, EnvRTSPURL, "no scheme"}},
+			{"rtsp_url_with_path_in_host", map[string]string{EnvRTSPHost: "rtsp://cam/live"}, []string{EnvRTSPHost, "no scheme"}},
+			{"rtsp_port_in_host", map[string]string{EnvRTSPHost: "10.0.0.5:554"}, []string{EnvRTSPHost, EnvRTSPPort, "port"}},
+			{"rtsp_path_in_host", map[string]string{EnvRTSPHost: "10.0.0.5/Streaming"}, []string{EnvRTSPHost, EnvRTSPPath, "path"}},
+			{"rtsp_query_in_host", map[string]string{EnvRTSPHost: "10.0.0.5?channel=1"}, []string{EnvRTSPHost, "path"}},
+			{"sftp_scheme_in_host", map[string]string{EnvSFTPHost: "sftp://files.example.com"}, []string{EnvSFTPHost, EnvSFTPURL}},
+			{"sftp_port_in_host", map[string]string{EnvSFTPHost: "files.example.com:2222"}, []string{EnvSFTPHost, EnvSFTPPort}},
+			{"sftp_path_in_host", map[string]string{EnvSFTPHost: "files.example.com/upload"}, []string{EnvSFTPHost, EnvSFTPRemoteDir}},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				err := loadErr(t, withEnv(tc.env))
+				for _, m := range tc.mentions {
+					if !strings.Contains(err.Error(), m) {
+						t.Errorf("err = %v\nwant it to mention %q", err, m)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("legitimate_hosts_are_accepted", func(t *testing.T) {
+		for _, host := range []string{"10.0.0.5", "cam.example.com", "fd00::1", "::1", "localhost"} {
+			t.Run(host, func(t *testing.T) {
+				cfg := mustLoad(t, withEnv(map[string]string{EnvRTSPHost: host}))
+				if cfg.RTSP.Host != host {
+					t.Errorf("host = %q, want %q", cfg.RTSP.Host, host)
+				}
+			})
+		}
+	})
+
+	t.Run("a_full_url_still_belongs_in_the_url_setting", func(t *testing.T) {
+		// The suggested remedy must actually work.
+		env := withEnv(map[string]string{EnvRTSPURL: "rtsp://10.0.0.5:554/live"})
+		delete(env, EnvRTSPHost)
+		cfg := mustLoad(t, env)
+		got, err := cfg.RTSP.ResolvedURL()
+		if err != nil {
+			t.Fatalf("ResolvedURL: %v", err)
+		}
+		if got != "rtsp://10.0.0.5:554/live" {
+			t.Errorf("ResolvedURL() = %q", got)
+		}
+	})
+
 	t.Run("multiple_errors_aggregated", func(t *testing.T) {
 		env := withEnv(map[string]string{
 			EnvRTSPTransport:      "sctp",
